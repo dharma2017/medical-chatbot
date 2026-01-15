@@ -2,8 +2,135 @@ import streamlit as st
 import streamlit.components.v1 as components
 import json
 import os
+import subprocess
+import time
+import sys
+import atexit
+import signal
 
 BASE_DIR = os.path.dirname(__file__)
+PID_FILE = os.path.join(BASE_DIR, ".flask_pid")
+
+
+def kill_process_on_port(port):
+    """Kill any process listening on the given port"""
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["powershell", "-Command", f"Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5
+            )
+        except:
+            pass
+
+
+def cleanup_flask_server():
+    """Clean up Flask server process on exit"""
+    # Try to kill using PID file
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, "r") as f:
+                pid = int(f.read().strip())
+            
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/F", "/T"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5
+                )
+            else:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except:
+                    pass
+            
+            print(f"✓ Flask server (PID: {pid}) stopped")
+        except Exception as e:
+            print(f"Error stopping Flask server: {e}")
+        finally:
+            try:
+                os.remove(PID_FILE)
+            except:
+                pass
+    
+    # Aggressive fallback: kill anything on port 8080
+    kill_process_on_port(8080)
+
+
+# Register cleanup function to run when script exits (fallback)
+atexit.register(cleanup_flask_server)
+
+
+@st.cache_resource
+def start_flask_server():
+    """Start the Flask server in the background if not already running"""
+    import socket
+    
+    def is_port_in_use(port):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            result = s.connect_ex(('localhost', port))
+            return result == 0
+    
+    # Check if server is already running
+    if is_port_in_use(8080):
+        st.info("ℹ️ Flask server already running on port 8080")
+        return
+    
+    try:
+        # Start Flask server as a subprocess with proper environment
+        env = os.environ.copy()
+        
+        log_file = os.path.join(BASE_DIR, "flask_server.log")
+        
+        with open(log_file, "w") as log:
+            process = subprocess.Popen(
+                [sys.executable, os.path.join(BASE_DIR, "app.py")],
+                cwd=BASE_DIR,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                env=env,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+            )
+        
+        # Save PID to file for cleanup on exit
+        with open(PID_FILE, "w") as f:
+            f.write(str(process.pid))
+        
+        print(f"[Streamlit] Started Flask server with PID: {process.pid}")
+        
+        # Create a placeholder for status updates
+        status_placeholder = st.empty()
+        
+        # Poll for server startup with status updates
+        max_wait_time = 30  # Maximum 30 seconds to wait
+        check_interval = 0.5  # Check every 0.5 seconds
+        elapsed = 0
+        
+        while elapsed < max_wait_time:
+            if is_port_in_use(8080):
+                status_placeholder.success("✅ Flask server started on port 8080!")
+                print(f"[Streamlit] Flask server ready after {elapsed:.1f}s")
+                return
+            
+            # Show waiting status with elapsed time
+            status_placeholder.info(f"⏳ Flask server starting... ({elapsed:.1f}s)")
+            
+            time.sleep(check_interval)
+            elapsed += check_interval
+        
+        # If we get here, server didn't start in time
+        try:
+            with open(log_file, "r") as f:
+                log_content = f.read()
+            status_placeholder.error(f"⚠️ Flask server startup timeout. Logs:\n{log_content}")
+        except:
+            status_placeholder.error(f"⚠️ Flask server didn't start within {max_wait_time}s. Please check the logs.")
+            
+    except Exception as e:
+        st.error(f"❌ Failed to start Flask server: {str(e)}")
 
 
 def ensure_storage():
@@ -40,9 +167,23 @@ def get_chatbot_html(api_url="http://localhost:8080/get"):
 
 
 def main():
+    
     st.set_page_config(page_title="Medical Assistant", layout="wide", initial_sidebar_state="collapsed")
 
     st.title("Medical Assistant")
+    
+    # Start Flask server on app startup
+    start_flask_server()
+    
+    # Add JavaScript to cleanup Flask server when page closes
+    st.markdown("""
+    <script>
+    window.addEventListener('beforeunload', function() {
+        // Notify that the app is closing
+        fetch('/stop_flask', {method: 'POST'}).catch(() => {});
+    });
+    </script>
+    """, unsafe_allow_html=True)
 
     col1, col2 = st.columns([1, 1])
 
