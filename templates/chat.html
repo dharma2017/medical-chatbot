@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Chatbot</title>
+		<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css" integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous">
+		<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.5.0/css/all.css" integrity="sha384-B4dIYHKNBt8Bc12p+WXckhzcICo0wtJAoU8YZTY5qE0Id1GSseTk6S+L3BlXeVIU" crossorigin="anonymous">
+		<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+		<style>
+			body {
+				margin: 0;
+				padding: 0;
+				overflow: hidden;
+				height: 100%;
+				background: white;
+			}
+
+			@keyframes slideUpFly {
+				from {
+					opacity: 0;
+					transform: translateY(50px) scale(0.95);
+				}
+				to {
+					opacity: 1;
+					transform: translateY(0) scale(1);
+				}
+			}
+
+			.chat-icon {
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				border-radius: 50%;
+				border: none;
+				color: white;
+				font-size: 24px;
+				cursor: pointer;
+				box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+				transition: all 0.3s ease;
+				width: 60px;
+				height: 60px;
+				padding: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+			}
+
+			.chat-icon:hover {
+				transform: scale(1.1);
+				box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+			}
+
+			.chat-modal {
+				background: white;
+				border-radius: 15px;
+				box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+				display: flex;
+				flex-direction: column;
+				height: 750px;
+			}
+
+			#chatModal {
+				animation: slideUpFly 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+			}
+
+			.modal-header {
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				color: white;
+				padding: 20px;
+				border-radius: 15px 15px 0 0;
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+			}
+
+			.modal-title {
+				display: flex;
+				align-items: center;
+				gap: 12px;
+			}
+
+			.modal-user-img {
+				width: 45px;
+				height: 45px;
+				border-radius: 50%;
+				border: 2px solid white;
+			}
+
+			.modal-title h5 {
+				margin: 0;
+				font-size: 18px;
+				font-weight: 600;
+			}
+
+			.modal-title p {
+				margin: 0;
+				font-size: 13px;
+				opacity: 0.9;
+			}
+
+			.close-btn {
+				background: none;
+				border: none;
+				color: white;
+				font-size: 28px;
+				cursor: pointer;
+				padding: 0;
+				width: 30px;
+				height: 30px;
+			}
+
+			.close-btn:hover {
+				opacity: 0.8;
+			}
+
+			.modal-body {
+				flex: 1;
+				overflow-y: auto;
+				padding: 20px;
+				background: #f5f5f5;
+			}
+
+			.modal-body::-webkit-scrollbar {
+				width: 6px;
+			}
+
+			.modal-body::-webkit-scrollbar-thumb {
+				background: #ccc;
+				border-radius: 3px;
+			}
+
+			.msg_cotainer, .msg_cotainer_send {
+				margin-bottom: 10px;
+				padding: 12px 16px;
+				border-radius: 18px;
+				max-width: 75%;
+				word-wrap: break-word;
+				line-height: 1.4;
+			}
+
+			.msg_cotainer {
+				background: white;
+				color: #333;
+				border-bottom-left-radius: 4px;
+			}
+
+			.msg_cotainer_send {
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				color: white;
+				margin-left: auto;
+				border-bottom-right-radius: 4px;
+			}
+
+			.msg_time, .msg_time_send {
+				font-size: 10px;
+				opacity: 0.7;
+				margin-top: 5px;
+				display: block;
+			}
+
+			.d-flex {
+				display: flex;
+				margin-bottom: 15px;
+			}
+
+			.justify-content-start {
+				justify-content: flex-start;
+			}
+
+			.justify-content-end {
+				justify-content: flex-end;
+			}
+
+			.img_cont_msg {
+				width: 40px;
+				height: 40px;
+				flex-shrink: 0;
+				margin: 0 10px;
+			}
+
+			.user_img_msg {
+				width: 40px;
+				height: 40px;
+				border-radius: 50%;
+				border: 2px solid #667eea;
+			}
+
+			.modal-footer {
+				padding: 15px;
+				background: white;
+				border-radius: 0 0 15px 15px;
+				border-top: 1px solid #e0e0e0;
+			}
+
+			.input-group {
+				display: flex;
+				gap: 10px;
+			}
+
+			.type_msg {
+				flex: 1;
+				border: 1px solid #ddd;
+				border-radius: 25px;
+				padding: 10px 18px;
+				font-size: 14px;
+			}
+
+			.type_msg:focus {
+				border-color: #667eea;
+				outline: none;
+			}
+
+			.send_btn {
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+				border: none !important;
+				color: white !important;
+				width: 45px;
+				height: 45px;
+				border-radius: 50%;
+				cursor: pointer;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				padding: 0 !important;
+			}
+
+			.send_btn:hover {
+				transform: scale(1.1);
+			}
+
+			.mb-4 {
+				margin-bottom: 1rem;
+			}
+
+			.rounded-circle {
+				border-radius: 50%;
+			}
+		</style>
+	</head>
+	
+	
+	<body style="margin: 0; padding: 0; overflow: visible; position: fixed; width: 100%; height: 100%; top: 0; left: 0;">
+		<!-- Floating Chat Icon Button -->
+		<div style="position: fixed; bottom: 20px; right: 20px; z-index: 999999; pointer-events: auto;">
+			<button id="chatIcon" class="chat-icon" type="button">
+				<i class="fas fa-comments"></i>
+			</button>
+		</div>
+
+		<!-- Chat Container -->
+		<div style="width: 100%; height: 100%; display: flex; flex-direction: column; position: relative; pointer-events: auto; overflow: auto;">
+			
+			<!-- Chat Popup Modal -->
+			<div id="chatModal" style="position: fixed; bottom: 90px; right: 20px; z-index: 999998; display: none; width: 100%; max-width: 385px; pointer-events: auto;">
+				<div class="chat-modal">
+					<div class="modal-header">
+						<div class="modal-title">
+							<img src="https://cdn-icons-png.flaticon.com/512/387/387569.png" class="modal-user-img">
+							<div>
+								<h5>Medical Assistant</h5>
+								<p>Ask me anything!</p>
+							</div>
+						</div>
+						<button id="closeBtn" class="close-btn" type="button">&times;</button>
+					</div>
+					<div id="messageFormeight" class="modal-body">
+						<div class="d-flex justify-content-start mb-4">
+							<div class="img_cont_msg">
+								<img src="https://cdn-icons-png.flaticon.com/512/387/387569.png" class="rounded-circle user_img_msg">
+							</div>
+							<div class="msg_cotainer">
+								Hello! I'm your medical assistant. How can I help you today?
+								<span class="msg_time">Just now</span>
+							</div>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<form id="messageArea" class="input-group">
+							<input type="text" id="text" name="msg" placeholder="Type your message..." autocomplete="off" class="form-control type_msg" required/>
+							<div class="input-group-append">
+								<button type="submit" id="send" class="input-group-text send_btn"><i class="fas fa-location-arrow"></i></button>
+							</div>
+						</form>
+					</div>
+				</div>
+			</div>
+	</div>
+	<script>
+		let isModalOpen = false;
+
+		// Toggle chat modal
+		if (document.getElementById('chatIcon')) {
+			document.getElementById('chatIcon').addEventListener('click', function(e) {
+				e.preventDefault();
+				e.stopPropagation();
+				const modal = document.getElementById('chatModal');
+				if (!isModalOpen) {
+					modal.style.display = 'block';
+					isModalOpen = true;
+				} else {
+					modal.style.display = 'none';
+					isModalOpen = false;
+				}
+			});
+		}
+
+			// Close chat modal
+			if (document.getElementById('closeBtn')) {
+				document.getElementById('closeBtn').addEventListener('click', function(e) {
+					e.preventDefault();
+					e.stopPropagation();
+					document.getElementById('chatModal').style.display = 'none';
+					isModalOpen = false;
+				});
+			}
+
+			// Send message
+			$(document).ready(function() {
+				$("#messageArea").on("submit", function(event) {
+					event.preventDefault();
+					
+					const date = new Date();
+					const hour = String(date.getHours()).padStart(2, '0');
+					const minute = String(date.getMinutes()).padStart(2, '0');
+					const str_time = hour + ":" + minute;
+					var rawText = $("#text").val();
+
+					if (!rawText.trim()) return;
+
+					var userHtml = '<div class="d-flex justify-content-end mb-4"><div class="msg_cotainer_send">' + rawText + '<span class="msg_time_send">'+ str_time + '</span></div><div class="img_cont_msg"><img src="https://i.ibb.co/d5b84Xw/Untitled-design.png" class="rounded-circle user_img_msg"></div></div>';
+					
+					$("#text").val("");
+					$("#messageFormeight").append(userHtml);
+					// Scroll to bottom
+					$("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
+
+					$.ajax({
+						data: {
+							msg: rawText,	
+						},
+						type: "POST",
+						url: "%API_URL%",
+					}).done(function(data) {
+						var botHtml = '<div class="d-flex justify-content-start mb-4"><div class="img_cont_msg"><img src="https://cdn-icons-png.flaticon.com/512/387/387569.png" class="rounded-circle user_img_msg"></div><div class="msg_cotainer">' + data + '<span class="msg_time">' + str_time + '</span></div></div>';
+						$("#messageFormeight").append($.parseHTML(botHtml));
+						// Scroll to bottom
+						$("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
+					});
+				});
+			});
+		</script>
+        
+    </body>
+</html>
