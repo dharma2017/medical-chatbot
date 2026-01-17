@@ -7,9 +7,15 @@ import time
 import sys
 import atexit
 import signal
+import platform
 
 BASE_DIR = os.path.dirname(__file__)
 PID_FILE = os.path.join(BASE_DIR, ".flask_pid")
+
+# Detect if running on Streamlit Cloud
+IS_STREAMLIT_CLOUD = "STREAMLIT_SERVER_HEADLESS" in os.environ or os.path.exists("/workspace")
+IS_LOCAL = not IS_STREAMLIT_CLOUD
+IS_WINDOWS = sys.platform == "win32"
 
 
 def kill_process_on_port(port):
@@ -69,10 +75,23 @@ def start_flask_server():
     """Start the Flask server in the background if not already running"""
     import socket
     
+    # Skip Flask startup on Streamlit Cloud
+    if IS_STREAMLIT_CLOUD:
+        st.warning(
+            "⚠️ **Note:** This app is running on Streamlit Cloud.\n\n"
+            "The Flask backend is hosted separately. For local development, use:\n"
+            "```bash\npython run.py\n```"
+        )
+        return
+    
     def is_port_in_use(port):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            result = s.connect_ex(('localhost', port))
-            return result == 0
+            try:
+                s.settimeout(1)
+                result = s.connect_ex(('localhost', port))
+                return result == 0
+            except:
+                return False
     
     # Check if server is already running
     if is_port_in_use(8080):
@@ -92,7 +111,7 @@ def start_flask_server():
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 env=env,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if IS_WINDOWS else 0
             )
         
         # Save PID to file for cleanup on exit
@@ -172,18 +191,21 @@ def main():
 
     st.title("Medical Assistant")
     
-    # Start Flask server on app startup
-    start_flask_server()
+    # Show environment info in development mode
+    if IS_LOCAL and "DEBUG" in os.environ:
+        st.info(f"🔧 Running locally | OS: {platform.system()}")
     
-    # Add JavaScript to cleanup Flask server when page closes
-    st.markdown("""
-    <script>
-    window.addEventListener('beforeunload', function() {
-        // Notify that the app is closing
-        fetch('/stop_flask', {method: 'POST'}).catch(() => {});
-    });
-    </script>
-    """, unsafe_allow_html=True)
+    # Start Flask server on app startup (only if local)
+    if IS_LOCAL:
+        start_flask_server()
+    else:
+        # On Streamlit Cloud, show deployment info
+        with st.sidebar:
+            st.info(
+                "📡 **Deployment Info**\n\n"
+                "This is a **Streamlit Cloud** deployment. "
+                "For full functionality with Flask backend, deploy locally or to AWS/Heroku."
+            )
 
     col1, col2 = st.columns([1, 1])
 
