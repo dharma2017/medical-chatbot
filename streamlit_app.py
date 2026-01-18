@@ -2,155 +2,66 @@ import streamlit as st
 import streamlit.components.v1 as components
 import json
 import os
-import subprocess
-import time
-import sys
-import atexit
-import signal
-import platform
+from dotenv import load_dotenv
+
+# MUST BE FIRST STREAMLIT COMMAND
+st.set_page_config(page_title="Medical Assistant", layout="wide", initial_sidebar_state="collapsed")
 
 BASE_DIR = os.path.dirname(__file__)
-PID_FILE = os.path.join(BASE_DIR, ".flask_pid")
 
-# Detect if running on Streamlit Cloud
-IS_STREAMLIT_CLOUD = "STREAMLIT_SERVER_HEADLESS" in os.environ or os.path.exists("/workspace")
-IS_LOCAL = not IS_STREAMLIT_CLOUD
-IS_WINDOWS = sys.platform == "win32"
+# Load environment variables
+load_dotenv()
 
-
-def kill_process_on_port(port):
-    """Kill any process listening on the given port"""
-    if sys.platform == "win32":
-        try:
-            subprocess.run(
-                ["powershell", "-Command", f"Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5
-            )
-        except:
-            pass
-
-
-def cleanup_flask_server():
-    """Clean up Flask server process on exit"""
-    # Try to kill using PID file
-    if os.path.exists(PID_FILE):
-        try:
-            with open(PID_FILE, "r") as f:
-                pid = int(f.read().strip())
-            
-            if sys.platform == "win32":
-                subprocess.run(
-                    ["taskkill", "/PID", str(pid), "/F", "/T"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=5
-                )
-            else:
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except:
-                    pass
-            
-            print(f"✓ Flask server (PID: {pid}) stopped")
-        except Exception as e:
-            print(f"Error stopping Flask server: {e}")
-        finally:
-            try:
-                os.remove(PID_FILE)
-            except:
-                pass
-    
-    # Aggressive fallback: kill anything on port 8080
-    kill_process_on_port(8080)
-
-
-# Register cleanup function to run when script exits (fallback)
-atexit.register(cleanup_flask_server)
-
-
+# Initialize embeddings and chatbot on first run
 @st.cache_resource
-def start_flask_server():
-    """Start the Flask server in the background if not already running"""
-    import socket
-    
-    # Skip Flask startup on Streamlit Cloud
-    if IS_STREAMLIT_CLOUD:
-        st.warning(
-            "⚠️ **Note:** This app is running on Streamlit Cloud.\n\n"
-            "The Flask backend is hosted separately. For local development, use:\n"
-            "```bash\npython run.py\n```"
-        )
-        return
-    
-    def is_port_in_use(port):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.settimeout(1)
-                result = s.connect_ex(('localhost', port))
-                return result == 0
-            except:
-                return False
-    
-    # Check if server is already running
-    if is_port_in_use(8080):
-        st.info("ℹ️ Flask server already running on port 8080")
-        return
-    
+def initialize_chatbot():
+    """Initialize LangChain chatbot components"""
     try:
-        # Start Flask server as a subprocess with proper environment
-        env = os.environ.copy()
+        from src.helper import download_hugging_face_embeddings
+        from src.prompt import system_prompt
+        from langchain_pinecone import PineconeVectorStore
+        from langchain_openai import ChatOpenAI
+        from langchain_core.prompts import ChatPromptTemplate
+        from langchain_core.runnables import RunnablePassthrough
         
-        log_file = os.path.join(BASE_DIR, "flask_server.log")
+        PINECONE_API_KEY = os.environ.get('PINECONE_API_KEY')
+        OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
         
-        with open(log_file, "w") as log:
-            process = subprocess.Popen(
-                [sys.executable, os.path.join(BASE_DIR, "app.py")],
-                cwd=BASE_DIR,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                env=env,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if IS_WINDOWS else 0
-            )
+        if not PINECONE_API_KEY or not OPENAI_API_KEY:
+            st.error("❌ Missing API keys. Please set PINECONE_API_KEY and OPENAI_API_KEY in your environment.")
+            return None
         
-        # Save PID to file for cleanup on exit
-        with open(PID_FILE, "w") as f:
-            f.write(str(process.pid))
+        os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
+        os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
         
-        print(f"[Streamlit] Started Flask server with PID: {process.pid}")
+        embeddings = download_hugging_face_embeddings()
+        index_name = "medical-chatbot"
+        docsearch = PineconeVectorStore.from_existing_index(
+            index_name=index_name,
+            embedding=embeddings
+        )
         
-        # Create a placeholder for status updates
-        status_placeholder = st.empty()
+        retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+        chatModel = ChatOpenAI(model="gpt-4o")
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", "{input}"),
+        ])
         
-        # Poll for server startup with status updates
-        max_wait_time = 30  # Maximum 30 seconds to wait
-        check_interval = 0.5  # Check every 0.5 seconds
-        elapsed = 0
+        rag_chain = (
+            {"context": retriever, "input": RunnablePassthrough()}
+            | prompt
+            | chatModel
+        )
         
-        while elapsed < max_wait_time:
-            if is_port_in_use(8080):
-                status_placeholder.success("✅ Flask server started on port 8080!")
-                print(f"[Streamlit] Flask server ready after {elapsed:.1f}s")
-                return
-            
-            # Show waiting status with elapsed time
-            status_placeholder.info(f"⏳ Flask server starting... ({elapsed:.1f}s)")
-            
-            time.sleep(check_interval)
-            elapsed += check_interval
-        
-        # If we get here, server didn't start in time
-        try:
-            with open(log_file, "r") as f:
-                log_content = f.read()
-            status_placeholder.error(f"⚠️ Flask server startup timeout. Logs:\n{log_content}")
-        except:
-            status_placeholder.error(f"⚠️ Flask server didn't start within {max_wait_time}s. Please check the logs.")
-            
+        return rag_chain
     except Exception as e:
-        st.error(f"❌ Failed to start Flask server: {str(e)}")
+        st.error(f"❌ Error initializing chatbot: {e}")
+        return None
 
+# Initialize session state for chat history
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
 
 def ensure_storage():
     path = os.path.join(BASE_DIR, "appointments.json")
@@ -158,7 +69,6 @@ def ensure_storage():
         with open(path, "w", encoding="utf-8") as f:
             json.dump([], f)
     return path
-
 
 def save_appointment(data):
     path = ensure_storage()
@@ -168,53 +78,36 @@ def save_appointment(data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(items, f, indent=2)
 
-
 def load_appointments():
     path = ensure_storage()
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
-def get_chatbot_html(api_url="http://localhost:8080/get"):
-    """Load the floating chatbot HTML from chat.html with API URL parameter"""
-    chat_html_path = os.path.join(BASE_DIR, "templates", "chat.html")
-    with open(chat_html_path, "r", encoding="utf-8") as f:
-        html_content = f.read()
-    # Replace the placeholders with actual URLs
-    html_content = html_content.replace('url: "%API_URL%"', f'url: "{api_url}"')
-    return html_content
-
+def get_chatbot_response(message, rag_chain):
+    """Get response from the chatbot"""
+    if rag_chain is None:
+        return "Sorry, the chatbot is not available. Please check API configurations."
+    
+    try:
+        response = rag_chain.invoke(message)
+        return response.content
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 def main():
+    # Initialize chatbot (after set_page_config)
+    rag_chain = initialize_chatbot()
     
-    st.set_page_config(page_title="Medical Assistant", layout="wide", initial_sidebar_state="collapsed")
-
     st.title("Medical Assistant")
-    
-    # Show environment info in development mode
-    if IS_LOCAL and "DEBUG" in os.environ:
-        st.info(f"🔧 Running locally | OS: {platform.system()}")
-    
-    # Start Flask server on app startup (only if local)
-    if IS_LOCAL:
-        start_flask_server()
-    else:
-        # On Streamlit Cloud, show deployment info
-        with st.sidebar:
-            st.info(
-                "📡 **Deployment Info**\n\n"
-                "This is a **Streamlit Cloud** deployment. "
-                "For full functionality with Flask backend, deploy locally or to AWS/Heroku."
-            )
 
     col1, col2 = st.columns([1, 1])
 
     with col1:
         st.header("📅 Book an Appointment")
         with st.form("appointment_form"):
-            name = st.text_input("Full name", key="name")
-            email = st.text_input("Email", key="email")
-            phone = st.text_input("Phone", key="phone")
+            name = st.text_input("Full name")
+            email = st.text_input("Email")
+            phone = st.text_input("Phone")
             date = st.date_input("Date")
             time = st.time_input("Time")
             reason = st.text_area("Reason for visit")
@@ -244,52 +137,44 @@ def main():
 
     with col2:
         st.header("💬 Medical Chatbot")
-        st.markdown("Click the chat icon in the bottom-right corner to start chatting!")
         
-        # Display some info or instructions
-        # st.info("💡 **Chatbot Features:**\n\n"
-        #         "- Ask about clinic hours\n"
-        #         "- Get information about appointments\n"
-        #         "- Emergency guidance\n"
-        #         "- General health questions")
+        # Chat container
+        chat_container = st.container()
         
-        # # FAQ Section
-        # with st.expander("❓ Frequently Asked Questions"):
-        #     st.markdown("""
-        #     **Q: How do I book an appointment?**
+        # Display chat history
+        with chat_container:
+            if not st.session_state.chat_history:
+                with st.chat_message("assistant"):
+                    st.write("Hello! I'm your medical assistant. How can I help you today?")
             
-        #     A: Use the appointment form on the left side. Fill in your details, select your preferred date and time, and click "Book appointment".
-            
-        #     ---
-            
-        #     **Q: What are your clinic hours?**
-            
-        #     A: Our clinic is open Monday-Friday, 9 AM to 5 PM. We are closed on weekends and public holidays.
-            
-        #     ---
-            
-        #     **Q: Is this a medical emergency?**
-            
-        #     A: If you're experiencing a medical emergency, please call 911 or visit your nearest emergency room immediately. Do not wait for online assistance.
-            
-        #     ---
-            
-        #     **Q: Can I cancel or reschedule my appointment?**
-            
-        #     A: Yes, you can cancel or reschedule by calling our office at least 24 hours in advance. Please contact us at (555) 123-4567.
-            
-        #     ---
-            
-        #     **Q: Do you accept insurance?**
-            
-        #     A: Yes, we accept most major insurance plans. Please bring your insurance card to your appointment.
-        #     """)
+            for message in st.session_state.chat_history:
+                with st.chat_message(message["role"]):
+                    st.write(message["content"])
         
-        # Render the floating chatbot within the column
-        api_url = "http://localhost:8080/get"  # You can make this configurable
-        components.html(get_chatbot_html(api_url), height=850, scrolling=False)
-
-
+        # Chat input
+        if prompt := st.chat_input("Type your message..."):
+            # Add user message to chat history
+            st.session_state.chat_history.append({"role": "user", "content": prompt})
+            
+            # Display user message
+            with chat_container:
+                with st.chat_message("user"):
+                    st.write(prompt)
+            
+            # Get bot response
+            with st.spinner("Thinking..."):
+                response = get_chatbot_response(prompt, rag_chain)
+            
+            # Add assistant response to chat history
+            st.session_state.chat_history.append({"role": "assistant", "content": response})
+            
+            # Display assistant response
+            with chat_container:
+                with st.chat_message("assistant"):
+                    st.write(response)
+            
+            # Rerun to update the display
+            st.rerun()
 
 if __name__ == "__main__":
     main()
